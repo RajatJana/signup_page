@@ -1,0 +1,68 @@
+import os
+import shutil
+import tempfile
+import subprocess
+import xml.etree.ElementTree as ET
+
+def clone_repo(repo_url):
+    temp_dir = tempfile.mkdtemp()
+    subprocess.run(["git", "clone", repo_url, temp_dir], check=True)
+    return temp_dir
+
+def detect_technology(repo_path):
+    tech = []
+    if os.path.exists(os.path.join(repo_path, "pom.xml")):
+        tech.append("Java (Maven)")
+    if os.path.exists(os.path.join(repo_path, "build.gradle")):
+        tech.append("Java/Kotlin (Gradle)")
+    if os.path.exists(os.path.join(repo_path, "requirements.txt")):
+        tech.append("Python")
+    if os.path.exists(os.path.join(repo_path, "setup.py")):
+        tech.append("Python (Package)")
+    if os.path.exists(os.path.join(repo_path, "package.json")):
+        tech.append("Node.js")
+    if os.path.exists(os.path.join(repo_path, "composer.json")):
+        tech.append("PHP (Composer)")
+    return tech
+
+def parse_pom_dependencies(pom_path):
+    tree = ET.parse(pom_path)
+    root = tree.getroot()
+    ns = {'maven': 'http://maven.apache.org/POM/4.0.0'}
+    dependencies = []
+    for dependency in root.findall(".//maven:dependency", namespaces=ns):
+        group_id = dependency.find('maven:groupId', namespaces=ns).text
+        artifact_id = dependency.find('maven:artifactId', namespaces=ns).text
+        version = dependency.find('maven:version', namespaces=ns)
+        version = version.text if version is not None else "N/A"
+        dependencies.append((group_id, artifact_id, version))
+    return dependencies
+
+def main(repo_url):
+    try:
+        repo_path = clone_repo(repo_url)
+        print(f"Repo cloned at: {repo_path}\n")
+        
+        tech_stack = detect_technology(repo_path)
+        if tech_stack:
+            print(f"Detected Technologies: {', '.join(tech_stack)}")
+        else:
+            print("Could not detect any major technology.")
+        
+        if "Java (Maven)" in tech_stack:
+            pom_path = os.path.join(repo_path, "pom.xml")
+            if os.path.exists(pom_path):
+                print("\nDependencies found in pom.xml:")
+                dependencies = parse_pom_dependencies(pom_path)
+                for group_id, artifact_id, version in dependencies:
+                    print(f"- {group_id}:{artifact_id}:{version}")
+            else:
+                print("\npom.xml not found!")
+    finally:
+        # Cleanup
+        shutil.rmtree(repo_path)
+
+# Example usage
+if __name__ == "__main__":
+    repo_link = input("Enter the GitHub repo URL: ").strip()
+    main(repo_link)
