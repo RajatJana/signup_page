@@ -6,8 +6,13 @@ import xml.etree.ElementTree as ET
 
 def clone_repo(repo_url):
     temp_dir = tempfile.mkdtemp()
-    subprocess.run(["git", "clone", repo_url, temp_dir], check=True)
-    return temp_dir
+    try:
+        subprocess.run(["git", "clone", repo_url, temp_dir], check=True)
+        return temp_dir
+    except subprocess.CalledProcessError:
+        print("Failed to clone repo! Please check the repo URL or internet connection.")
+        shutil.rmtree(temp_dir)  # Cleanup temporary directory
+        return None  # Very important: return None if cloning fails
 
 def detect_technology(repo_path):
     tech = []
@@ -31,16 +36,26 @@ def parse_pom_dependencies(pom_path):
     ns = {'maven': 'http://maven.apache.org/POM/4.0.0'}
     dependencies = []
     for dependency in root.findall(".//maven:dependency", namespaces=ns):
-        group_id = dependency.find('maven:groupId', namespaces=ns).text
-        artifact_id = dependency.find('maven:artifactId', namespaces=ns).text
+        group_id = dependency.find('maven:groupId', namespaces=ns)
+        artifact_id = dependency.find('maven:artifactId', namespaces=ns)
         version = dependency.find('maven:version', namespaces=ns)
-        version = version.text if version is not None else "N/A"
-        dependencies.append((group_id, artifact_id, version))
+
+        if group_id is not None and artifact_id is not None:
+            dependencies.append((
+                group_id.text,
+                artifact_id.text,
+                version.text if version is not None else "N/A"
+            ))
     return dependencies
 
 def main(repo_url):
+    repo_path = None
     try:
         repo_path = clone_repo(repo_url)
+        if repo_path is None:
+            print("Repo cloning failed. Exiting.")
+            return  # Stop execution here if cloning failed
+
         print(f"Repo cloned at: {repo_path}\n")
         
         tech_stack = detect_technology(repo_path)
@@ -58,11 +73,12 @@ def main(repo_url):
                     print(f"- {group_id}:{artifact_id}:{version}")
             else:
                 print("\npom.xml not found!")
+    except Exception as e:
+        print(f"Error: {e}")
     finally:
-        # Cleanup
-        shutil.rmtree(repo_path)
+        if repo_path and os.path.exists(repo_path):
+            shutil.rmtree(repo_path)
 
-# Example usage
 if __name__ == "__main__":
     repo_link = input("Enter the GitHub repo URL: ").strip()
     main(repo_link)
