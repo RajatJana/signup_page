@@ -1,5 +1,6 @@
 import os
 import shutil
+import stat
 import tempfile
 import subprocess
 import xml.etree.ElementTree as ET
@@ -7,12 +8,12 @@ import xml.etree.ElementTree as ET
 def clone_repo(repo_url):
     temp_dir = tempfile.mkdtemp()
     try:
-        subprocess.run(["git", "clone", repo_url, temp_dir], check=True)
+        subprocess.run(["git", "clone", repo_url, temp_dir], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return temp_dir
-    except subprocess.CalledProcessError:
-        print("Failed to clone repo! Please check the repo URL or internet connection.")
-        shutil.rmtree(temp_dir)  # Cleanup temporary directory
-        return None  # Very important: return None if cloning fails
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to clone repo: {e}")
+        shutil.rmtree(temp_dir, onerror=handle_remove_readonly)
+        return None
 
 def detect_technology(repo_path):
     tech = []
@@ -31,22 +32,34 @@ def detect_technology(repo_path):
     return tech
 
 def parse_pom_dependencies(pom_path):
-    tree = ET.parse(pom_path)
-    root = tree.getroot()
-    ns = {'maven': 'http://maven.apache.org/POM/4.0.0'}
-    dependencies = []
-    for dependency in root.findall(".//maven:dependency", namespaces=ns):
-        group_id = dependency.find('maven:groupId', namespaces=ns)
-        artifact_id = dependency.find('maven:artifactId', namespaces=ns)
-        version = dependency.find('maven:version', namespaces=ns)
+    try:
+        tree = ET.parse(pom_path)
+        root = tree.getroot()
+        ns = {'maven': 'http://maven.apache.org/POM/4.0.0'}
 
-        if group_id is not None and artifact_id is not None:
-            dependencies.append((
-                group_id.text,
-                artifact_id.text,
-                version.text if version is not None else "N/A"
-            ))
-    return dependencies
+        dependencies = []
+        for dependency in root.findall(".//maven:dependency", namespaces=ns):
+            group_id = dependency.find('maven:groupId', namespaces=ns)
+            artifact_id = dependency.find('maven:artifactId', namespaces=ns)
+            version = dependency.find('maven:version', namespaces=ns)
+
+            if group_id is not None and artifact_id is not None:
+                dependencies.append((
+                    group_id.text,
+                    artifact_id.text,
+                    version.text if version is not None else "N/A"
+                ))
+        return dependencies
+    except Exception as e:
+        print(f"Error parsing pom.xml: {e}")
+        return []
+
+def handle_remove_readonly(func, path, exc_info):
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception as e:
+        print(f"Error forcing delete on {path}: {e}")
 
 def main(repo_url):
     repo_path = None
@@ -54,30 +67,36 @@ def main(repo_url):
         repo_path = clone_repo(repo_url)
         if repo_path is None:
             print("Repo cloning failed. Exiting.")
-            return  # Stop execution here if cloning failed
+            return
 
-        print(f"Repo cloned at: {repo_path}\n")
-        
+        print(f"\nRepo cloned at: {repo_path}\n")
+
         tech_stack = detect_technology(repo_path)
         if tech_stack:
             print(f"Detected Technologies: {', '.join(tech_stack)}")
         else:
             print("Could not detect any major technology.")
-        
+
         if "Java (Maven)" in tech_stack:
             pom_path = os.path.join(repo_path, "pom.xml")
             if os.path.exists(pom_path):
                 print("\nDependencies found in pom.xml:")
                 dependencies = parse_pom_dependencies(pom_path)
-                for group_id, artifact_id, version in dependencies:
-                    print(f"- {group_id}:{artifact_id}:{version}")
+                if dependencies:
+                    for group_id, artifact_id, version in dependencies:
+                        print(f"- {group_id}:{artifact_id}:{version}")
+                else:
+                    print("- No dependencies found.")
             else:
                 print("\npom.xml not found!")
     except Exception as e:
         print(f"Error: {e}")
     finally:
         if repo_path and os.path.exists(repo_path):
-            shutil.rmtree(repo_path)
+            try:
+                shutil.rmtree(repo_path, onerror=handle_remove_readonly)
+            except Exception as cleanup_error:
+                print(f"Warning: Cleanup failed: {cleanup_error}")
 
 if __name__ == "__main__":
     repo_link = input("Enter the GitHub repo URL: ").strip()
